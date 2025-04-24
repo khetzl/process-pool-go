@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -11,11 +12,13 @@ type Payload struct{}
 // WORKERS
 type Worker struct {
 	tasks chan Payload
+	wg    *sync.WaitGroup
 }
 
-func NewWorker(tasks chan Payload) (*Worker, error) {
+func NewWorker(tasks chan Payload, wg *sync.WaitGroup) (*Worker, error) {
 	return &Worker{
 		tasks: tasks,
+		wg:    wg,
 	}, nil
 }
 
@@ -28,6 +31,7 @@ func (w *Worker) Start(ctx context.Context) {
 				if err != nil {
 					fmt.Println("Worker task hander error ")
 				}
+				w.wg.Done()
 			case <-ctx.Done():
 				return
 			}
@@ -54,13 +58,16 @@ type Manager struct {
 
 	workerPoolSize  int
 	workerQueueSize int
+
+	wg *sync.WaitGroup
 }
 
-func NewManager() (*Manager, error) {
+func NewManager(wg *sync.WaitGroup) (*Manager, error) {
 	return &Manager{
 		workerCalls:     0,
 		workerPoolSize:  5, // TODO: pass config
 		workerQueueSize: 2, // TODO: pass config
+		wg:              wg,
 	}, nil
 }
 
@@ -69,7 +76,7 @@ func (m *Manager) Start(ctx context.Context) {
 
 	for i := 0; i < m.workerPoolSize; i++ {
 		tasks := make(chan Payload, m.workerQueueSize)
-		w, err := NewWorker(tasks)
+		w, err := NewWorker(tasks, m.wg)
 		if err != nil {
 			fmt.Println("worker init error")
 		}
@@ -79,6 +86,8 @@ func (m *Manager) Start(ctx context.Context) {
 }
 
 func (m *Manager) AddJob() error {
+	m.wg.Add(1)
+
 	index := m.workerCalls % uint32(len(m.workers))
 	m.workerCalls++
 
@@ -90,22 +99,19 @@ func (m *Manager) AddJob() error {
 }
 
 func main() {
-	m, err := NewManager()
+	var wg sync.WaitGroup
+
+	m, err := NewManager(&wg)
 	if err != nil {
 		fmt.Println("Error while creating manager")
 	}
 
-	go func() {
-		m.Start(context.Background())
-	}()
-
-	// Ideally, we wouldn't call the AddJob so quickly, and this is not an issue
-	// So, we are sleep here for a bit.
-	time.Sleep(1 * time.Second)
+	m.Start(context.Background())
 
 	for _ = range 10 {
 		m.AddJob()
 	}
 
-	time.Sleep(20 * time.Second)
+	wg.Wait()
+
 }
