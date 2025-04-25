@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"sync"
 	"time"
+
+	"github.com/schollz/progressbar/v3"
 )
 
 type Payload struct{}
@@ -13,12 +16,14 @@ type Payload struct{}
 type Worker struct {
 	tasks chan Payload
 	wg    *sync.WaitGroup
+	pb    *progressbar.ProgressBar
 }
 
-func NewWorker(tasks chan Payload, wg *sync.WaitGroup) (*Worker, error) {
+func NewWorker(tasks chan Payload, wg *sync.WaitGroup, pb *progressbar.ProgressBar) (*Worker, error) {
 	return &Worker{
 		tasks: tasks,
 		wg:    wg,
+		pb:    pb,
 	}, nil
 }
 
@@ -32,13 +37,14 @@ func (w *Worker) Start(ctx context.Context) {
 					fmt.Println("Worker task hander error ")
 				}
 				w.wg.Done()
+				w.pb.Add(1)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 	// Log start
-	fmt.Println("worker started")
+	//fmt.Println("worker started")
 }
 
 func (w *Worker) GetMessageQueue() chan Payload {
@@ -46,8 +52,10 @@ func (w *Worker) GetMessageQueue() chan Payload {
 }
 
 func (w *Worker) onTaskReceived(ctx context.Context, payload Payload) error {
-	time.Sleep(2 * time.Second)
-	fmt.Println("Dummy expensive task finished")
+	offset := rand.IntN(1500)
+	waitTime := time.Duration(offset + 500)
+	time.Sleep(waitTime * time.Millisecond)
+	//fmt.Println("Dummy expensive task finished")
 	return nil
 }
 
@@ -60,14 +68,16 @@ type Manager struct {
 	workerQueueSize int
 
 	wg *sync.WaitGroup
+	pb *progressbar.ProgressBar
 }
 
-func NewManager(wg *sync.WaitGroup) (*Manager, error) {
+func NewManager(wg *sync.WaitGroup, pb *progressbar.ProgressBar) (*Manager, error) {
 	return &Manager{
 		workerCalls:     0,
 		workerPoolSize:  5, // TODO: pass config
 		workerQueueSize: 2, // TODO: pass config
 		wg:              wg,
+		pb:              pb,
 	}, nil
 }
 
@@ -76,7 +86,7 @@ func (m *Manager) Start(ctx context.Context) {
 
 	for i := 0; i < m.workerPoolSize; i++ {
 		tasks := make(chan Payload, m.workerQueueSize)
-		w, err := NewWorker(tasks, m.wg)
+		w, err := NewWorker(tasks, m.wg, m.pb)
 		if err != nil {
 			fmt.Println("worker init error")
 		}
@@ -101,14 +111,17 @@ func (m *Manager) AddJob() error {
 func main() {
 	var wg sync.WaitGroup
 
-	m, err := NewManager(&wg)
+	numberOfTasks := 10
+	pb := progressbar.Default(int64(numberOfTasks))
+
+	m, err := NewManager(&wg, pb)
 	if err != nil {
 		fmt.Println("Error while creating manager")
 	}
 
 	m.Start(context.Background())
 
-	for _ = range 10 {
+	for _ = range numberOfTasks {
 		m.AddJob()
 	}
 
